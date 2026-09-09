@@ -1,0 +1,189 @@
+## 📌 Project Overview
+This project demonstrates an enterprise-grade metric collection and visualization stack built on Ubuntu Linux. It utilizes **Node Exporter** for hardware and OS metric harvesting, **Prometheus** as a time-series database engine, and **Grafana** for interactive dashboard visual analytics.
+
+---
+
+## 🔒 Security & Hardening Measures Implemented
+* **Least Privilege Principle:** Services run under unprivileged dedicated system accounts (`prometheus` & `node_exporter`) with `/bin/false` non-interactive shells.
+* **Modern APT Keyring Storage:** Repository signatures are securely managed via `/etc/apt/keyrings/` to prevent key hijacking.
+* **Strict Permission Boundary:** Directory access rights restricted (`chown 755/644`) to service-specific owners.
+* **Firewall Isolation:** Internal metric ports are isolated to `localhost`, exposing only Grafana HTTP service externally via UFW.
+
+---
+
+Step 01;
+
+## 🚀 Step-by-Step Deployment Guide
+
+### Step 1: System Update & Security User Creation
+Update core packages and create isolated system users without interactive shells.
+
+```bash
+# Update Ubuntu system repositories
+sudo apt update && sudo apt upgrade -y
+
+# Create unprivileged system users
+sudo useradd --no-create-home --shell /bin/false node_exporter
+sudo useradd --no-create-home --shell /bin/false prometheus
+
+
+Step 2; Install and Configure Node Exporter (Download the Node Exporter binary to collect host hardware metrics (CPU, Memory, Disk, Network).
+
+# Download and extract Node Exporter
+cd /tmp
+wget [https://github.com/prometheus/node_exporter/releases/download/v1.8.0/node_exporter-1.8.0.linux-amd64.tar.gz](https://github.com/prometheus/node_exporter/releases/download/v1.8.0/node_exporter-1.8.0.linux-amd64.tar.gz)
+tar xvf node_exporter-1.8.0.linux-amd64.tar.gz
+
+# Move binary to executable path and assign ownership
+sudo cp node_exporter-1.8.0.linux-amd64/node_exporter /usr/local/bin/
+sudo chown node_exporter:node_exporter /usr/local/bin/node_exporter
+
+# Clean temporary archive files
+rm -rf node_exporter-1.8.0.linux-amd64*
+
+
+Create a systemd unit file /etc/systemd/system/node_exporter.service:
+
+[Unit]
+Description=Node Exporter
+After=network.target
+
+[Service]
+User=node_exporter
+Group=node_exporter
+Type=simple
+ExecStart=/usr/local/bin/node_exporter
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+
+
+# Enable and start the service:
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now node_exporter
+
+
+
+Step 3: Install and Configure Prometheus (Install Prometheus engine and configure metric target scraping.)
+
+# Create required directory structures
+sudo mkdir -p /etc/prometheus /var/lib/prometheus
+
+# Download and extract Prometheus
+cd /tmp
+wget [https://github.com/prometheus/prometheus/releases/download/v2.52.0/prometheus-2.52.0.linux-amd64.tar.gz](https://github.com/prometheus/prometheus/releases/download/v2.52.0/prometheus-2.52.0.linux-amd64.tar.gz)
+tar xvf prometheus-2.52.0.linux-amd64.tar.gz
+
+# Copy binaries and web console templates
+sudo cp prometheus-2.52.0.linux-amd64/prometheus /usr/local/bin/
+sudo cp prometheus-2.52.0.linux-amd64/promtool /usr/local/bin/
+sudo cp -r prometheus-2.52.0.linux-amd64/consoles /etc/prometheus
+sudo cp -r prometheus-2.52.0.linux-amd64/console_libraries /etc/prometheus
+
+# Enforce secure directory ownership
+sudo chown -R prometheus:prometheus /etc/prometheus /var/lib/prometheus /usr/local/bin/prometheus /usr/local/bin/promtool
+
+# Clean temporary files
+rm -rf prometheus-2.52.0.linux-amd64*
+
+Create configuration file /etc/prometheus/prometheus.yml:
+
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'node_exporter'
+    static_configs:
+      - targets: ['localhost:9100']
+
+Create systemd unit file /etc/systemd/system/prometheus.service:
+
+
+[Unit]
+Description=Prometheus Server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=prometheus
+Group=prometheus
+Type=simple
+ExecStart=/usr/local/bin/prometheus \
+    --config.file=/etc/prometheus/prometheus.yml \
+    --storage.tsdb.path=/var/lib/prometheus/ \
+    --web.console.templates=/etc/prometheus/consoles \
+    --web.console.libraries=/etc/prometheus/console_libraries
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+
+Enable and start Prometheus:
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now prometheus
+
+
+
+Step 4: Install Grafana via Official Secure Repository (Use modern GPG keyrings for verified APT package installation)
+
+# Install prerequisite tools
+sudo apt-get install -y apt-transport-https software-properties-common wget gnupg
+
+# Add official GPG key securely to keyring directory
+sudo mkdir -p /etc/apt/keyrings
+sudo wget -O /etc/apt/keyrings/grafana.asc [https://apt.grafana.com/gpg-full.key](https://apt.grafana.com/gpg-full.key)
+sudo chmod 644 /etc/apt/keyrings/grafana.asc
+
+# Add repository with signed-by verification flag
+echo "deb [signed-by=/etc/apt/keyrings/grafana.asc] [https://apt.grafana.com](https://apt.grafana.com) stable main" | sudo tee /etc/apt/sources.list.d/grafana.list
+
+# Update APT repository and install Grafana
+sudo apt-get update
+sudo apt-get install -y grafana
+
+# Enable and start Grafana service
+sudo systemctl daemon-reload
+sudo systemctl enable --now grafana-server
+
+
+
+Step 5: Firewall Setup & Service Verification (Configure UFW firewall to open only the necessary web port for Grafana access.)
+
+# Allow SSH and Grafana port through firewall
+sudo ufw allow 22/tcp
+sudo ufw allow 3000/tcp
+sudo ufw reload
+
+# Verify active status of all stack services
+sudo systemctl status node_exporter prometheus grafana-server --no-pager
+
+
+Grafana Setup & Dashboard Verification
+
+1. Access Web Portal: Navigate to http://<SERVER_IP>:3000 in your web browser.
+2. Login Credentials: Use default login admin / admin and set a new secure password.
+3. Connect Data Source:
+    Go to Connections ➔ Data Sources ➔ Add Data Source.
+
+     Choose Prometheus.
+
+      Set Connection URL: http://localhost:9090.
+
+      Click Save & Test.
+
+4. Import Dashboard:
+
+   Navigate to Dashboards ➔ New ➔ Import.
+   Enter Dashboard ID 1860 (Node Exporter Full) and click Load.
+   Select Prometheus as the data source and click Import.
+
+
+
+
